@@ -73,6 +73,8 @@ impl<'t> WidgetWithState for TextEdit<'t> {
     type State = TextEditState;
 }
 
+const CURSOR_BLINK_DURATION: f64 = 0.5;
+
 impl<'t> TextEdit<'t> {
     pub fn load_state(ctx: &Context, id: Id) -> Option<TextEditState> {
         TextEditState::load(ctx, id)
@@ -458,6 +460,7 @@ impl<'t> TextEdit<'t> {
                         primary: galley.from_ccursor(ccursor_range.primary),
                         secondary: galley.from_ccursor(ccursor_range.secondary),
                     }));
+                    state.last_time = ui.ctx().input().time;
                 } else if response.triple_clicked() {
                     // Select line:
                     let center = cursor_at_pointer;
@@ -466,6 +469,7 @@ impl<'t> TextEdit<'t> {
                         primary: galley.from_ccursor(ccursor_range.primary),
                         secondary: galley.from_ccursor(ccursor_range.secondary),
                     }));
+                    state.last_time = ui.ctx().input().time;
                 } else if allow_drag_to_select {
                     if response.hovered() && ui.input().pointer.any_pressed() {
                         ui.memory().request_focus(id);
@@ -479,12 +483,14 @@ impl<'t> TextEdit<'t> {
                         } else {
                             state.set_cursor_range(Some(CursorRange::one(cursor_at_pointer)));
                         }
+                        state.last_time = ui.ctx().input().time;
                     } else if ui.input().pointer.any_down() && response.is_pointer_button_down_on()
                     {
                         // drag to select text:
                         if let Some(mut cursor_range) = state.cursor_range(&*galley) {
                             cursor_range.primary = cursor_at_pointer;
                             state.set_cursor_range(Some(cursor_range));
+                            state.last_time = ui.ctx().input().time;
                         }
                     }
                 }
@@ -580,25 +586,31 @@ impl<'t> TextEdit<'t> {
                     // the text galley has backgrounds (as e.g. `code` snippets in markup do).
                     paint_cursor_selection(ui, &painter, text_draw_pos, &galley, &cursor_range);
 
+                    let now = ui.ctx().input().time;
                     if text.is_mutable() {
-                        let cursor_pos = paint_cursor_end(
-                            ui,
-                            row_height,
-                            &painter,
-                            text_draw_pos,
-                            &galley,
-                            &cursor_range.primary,
-                        );
+                        let div = now - state.last_time;
+                        if div >= CURSOR_BLINK_DURATION * 2.0 {
+                            state.last_time = now;
+                        } else if div <= CURSOR_BLINK_DURATION {
+                            let cursor_pos = paint_cursor_end(
+                                ui,
+                                row_height,
+                                &painter,
+                                text_draw_pos,
+                                &galley,
+                                &cursor_range.primary,
+                            );
+                            if response.changed || selection_changed {
+                                ui.scroll_to_rect(cursor_pos, None); // keep cursor in view
+                            }
 
-                        if response.changed || selection_changed {
-                            ui.scroll_to_rect(cursor_pos, None); // keep cursor in view
+                            if interactive {
+                                // eframe web uses `text_cursor_pos` when showing IME,
+                                // so only set it when text is editable and visible!
+                                ui.ctx().output().text_cursor_pos = Some(cursor_pos.left_top());
+                            }
                         }
-
-                        if interactive {
-                            // eframe web uses `text_cursor_pos` when showing IME,
-                            // so only set it when text is editable and visible!
-                            ui.ctx().output().text_cursor_pos = Some(cursor_pos.left_top());
-                        }
+                        ui.ctx().request_repaint();
                     }
                 }
             }
@@ -835,6 +847,7 @@ fn events(
                 primary: galley.from_ccursor(new_ccursor_range.primary),
                 secondary: galley.from_ccursor(new_ccursor_range.secondary),
             };
+            state.last_time = ui.ctx().input().time;
         }
     }
 
