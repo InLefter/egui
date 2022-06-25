@@ -492,6 +492,7 @@ impl<'t> TextEdit<'t> {
                         } else {
                             state.set_cursor_range(Some(CursorRange::one(cursor_at_pointer)));
                         }
+                        println!("==> any_pressed {:?}", true);
                         state.last_time = ui.ctx().input().time;
                     } else if ui.input().pointer.any_down() && response.is_pointer_button_down_on()
                     {
@@ -500,6 +501,7 @@ impl<'t> TextEdit<'t> {
                             cursor_range.primary = cursor_at_pointer;
                             state.set_cursor_range(Some(cursor_range));
                             state.last_time = ui.ctx().input().time;
+                            println!("==> is_pointer_button_down_on {:?}", true);
                         }
                     }
                 }
@@ -538,6 +540,7 @@ impl<'t> TextEdit<'t> {
                 response.mark_changed();
             }
             cursor_range = Some(new_cursor_range);
+            // dbg!(changed, cursor_range);
         }
 
         let mut text_draw_pos = response.rect.min;
@@ -619,7 +622,7 @@ impl<'t> TextEdit<'t> {
                                 ui.ctx().output().text_cursor_pos = Some(cursor_pos.left_top());
                             }
                         }
-                        ui.ctx().request_repaint();
+                        // ui.ctx().request_repaint();
                     }
                 }
             }
@@ -697,15 +700,16 @@ fn events(
     password: bool,
     default_cursor_range: CursorRange,
 ) -> (bool, CursorRange) {
+    println!("default_cursor_range: {:?}", default_cursor_range);
     let mut cursor_range = state.cursor_range(&*galley).unwrap_or(default_cursor_range);
-
+    println!("cursor_range: {:?}", cursor_range);
     // We feed state to the undoer both before and after handling input
     // so that the undoer creates automatic saves even when there are no events for a while.
     state.undoer.lock().feed_state(
         ui.input().time,
         &(cursor_range.as_ccursor_range(), text.as_ref().to_owned()),
     );
-
+    println!("cursor_range: {:?}", cursor_range);
     let copy_if_not_password = |ui: &Ui, text: String| {
         if !password {
             ui.ctx().output().copied_text = text;
@@ -716,6 +720,7 @@ fn events(
 
     let events = ui.input().events.clone(); // avoid dead-lock by cloning. TODO(emilk): optimize
     for event in &events {
+        // dbg!(event);
         let did_mutate_text = match event {
             Event::Copy => {
                 if cursor_range.is_empty() {
@@ -846,6 +851,7 @@ fn events(
         };
 
         if let Some(new_ccursor_range) = did_mutate_text {
+            dbg!("???");
             any_change = true;
 
             // Layout again to avoid frame delay, and to keep `text` and `galley` in sync.

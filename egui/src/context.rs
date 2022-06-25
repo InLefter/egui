@@ -305,7 +305,7 @@ impl Context {
                 .at_most(Vec2::splat(5.0)),
         ); // make it easier to click
         let hovered = self.rect_contains_pointer(layer_id, clip_rect.intersect(interact_rect));
-        println!("layid: {:?}, {:?}", layer_id, hovered);
+        // println!("layid: {:?}, {:?}", layer_id, hovered);
         self.interact_with_hovered(layer_id, id, rect, sense, enabled, hovered)
     }
 
@@ -426,6 +426,10 @@ impl Context {
 
         if response.is_pointer_button_down_on {
             response.interact_pointer_pos = input.pointer.interact_pos();
+        }
+
+        if memory.interaction.select_multi {
+            response.is_pointer_button_down_on = true;
         }
 
         if input.pointer.any_down() {

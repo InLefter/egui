@@ -14,6 +14,7 @@ fn main() {
 struct MyApp {
     name: String,
     age: u32,
+    init_flag: bool,
 }
 
 impl Default for MyApp {
@@ -21,6 +22,7 @@ impl Default for MyApp {
         Self {
             name: "Arthur".to_owned(),
             age: 42,
+            init_flag: false,
         }
     }
 }
@@ -39,6 +41,10 @@ fn code_view_ui(ui: &mut egui::Ui, mut code: &str) {
 
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if !self.init_flag {
+            ctx.memory().select_multi_text_edit(true);
+            self.init_flag = true;
+        }
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("My egui Application");
             ui.horizontal(|ui| {
@@ -60,6 +66,8 @@ impl eframe::App for MyApp {
             code_view_ui(ui, code);
             if ui.button("Click each year").clicked() {
                 self.age += 1;
+                let x = self.age % 2 == 0;
+                ctx.memory().select_multi_text_edit(x);
             }
             ui.label(format!("Hello '{}', age {}", self.name, self.age));
         });

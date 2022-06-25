@@ -162,6 +162,8 @@ pub(crate) struct Interaction {
     /// Any interest in catching clicks this frame?
     /// Cleared to false at start of each frame.
     pub drag_interest: bool,
+
+    pub select_multi: bool,
 }
 
 /// Keeps tracks of what widget has keyboard focus
@@ -392,6 +394,11 @@ impl Memory {
             self.interaction.focus.id = None;
             self.interaction.focus.is_focus_locked = false;
         }
+    }
+
+    #[inline(always)]
+    pub fn select_multi_text_edit(&mut self, on: bool) {
+        self.interaction.select_multi = on;
     }
 
     /// Register this widget as being interested in getting keyboard focus.
