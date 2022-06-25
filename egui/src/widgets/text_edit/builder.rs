@@ -67,6 +67,7 @@ pub struct TextEdit<'t> {
     desired_height_rows: usize,
     lock_focus: bool,
     cursor_at_end: bool,
+    with_rect: bool,
 }
 
 impl<'t> WidgetWithState for TextEdit<'t> {
@@ -114,6 +115,7 @@ impl<'t> TextEdit<'t> {
             desired_height_rows: 4,
             lock_focus: false,
             cursor_at_end: true,
+            with_rect: true,
         }
     }
 
@@ -207,6 +209,11 @@ impl<'t> TextEdit<'t> {
         self
     }
 
+    pub fn with_rect(mut self, with_rect: bool) -> Self {
+        self.with_rect = with_rect;
+        self
+    }
+
     /// Default is `true`. If set to `false` there will be no frame showing that this is editable text!
     pub fn frame(mut self, frame: bool) -> Self {
         self.frame = frame;
@@ -281,6 +288,7 @@ impl<'t> TextEdit<'t> {
         let is_mutable = self.text.is_mutable();
         let frame = self.frame;
         let interactive = self.interactive;
+        let with_rect = self.with_rect;
         let where_to_put_background = ui.painter().add(Shape::Noop);
 
         let margin = self.margin;
@@ -300,7 +308,7 @@ impl<'t> TextEdit<'t> {
         if frame {
             let visuals = ui.style().interact(&output.response);
             let frame_rect = frame_rect.expand(visuals.expansion);
-            let shape = if is_mutable {
+            let shape = if is_mutable && with_rect {
                 if output.response.has_focus() {
                     epaint::RectShape {
                         rect: frame_rect,
@@ -353,6 +361,7 @@ impl<'t> TextEdit<'t> {
             desired_height_rows,
             lock_focus,
             cursor_at_end,
+            with_rect: _,
         } = self;
 
         let text_color = text_color

@@ -305,6 +305,7 @@ impl Context {
                 .at_most(Vec2::splat(5.0)),
         ); // make it easier to click
         let hovered = self.rect_contains_pointer(layer_id, clip_rect.intersect(interact_rect));
+        println!("layid: {:?}, {:?}", layer_id, hovered);
         self.interact_with_hovered(layer_id, id, rect, sense, enabled, hovered)
     }
 
