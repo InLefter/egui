@@ -130,6 +130,28 @@ impl Default for Options {
 }
 
 // ----------------------------------------------------------------------------
+/// multi edit text layout
+#[derive(Clone, Debug, Copy)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+pub struct TextEditLayout {
+    id: Id,
+    rect: Rect,
+    pos_y: f32,
+    is_pointer_button_down_on: bool,
+    covered: bool,
+}
+
+// ----------------------------------------------------------------------------
+#[derive(Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
+enum TextLayout {
+    Top,
+    Mid,
+    Bottom,
+    Outer,
+}
+
+// ----------------------------------------------------------------------------
 
 /// Say there is a button in a scroll area.
 /// If the user clicks the button, the button should click.
@@ -162,6 +184,12 @@ pub(crate) struct Interaction {
     /// Any interest in catching clicks this frame?
     /// Cleared to false at start of each frame.
     pub drag_interest: bool,
+
+    // pub multi_text_edit: std::collections::HashMap<Id, TextEditLayout>,
+    pub multi_text_edit: Vec<TextEditLayout>,
+
+    pub first_text: Option<TextEditLayout>,
+    pub is_pointer_button_down_on_text_edit: bool,
 }
 
 /// Keeps tracks of what widget has keyboard focus
@@ -352,6 +380,143 @@ impl Memory {
     #[inline(always)]
     pub fn has_focus(&self, id: Id) -> bool {
         self.interaction.focus.id == Some(id)
+    }
+
+    pub fn begin_multi_select(&mut self, id: Id, text_rect: Rect, cursor_pos: Pos2) {
+        self.interaction.multi_text_edit.clear();
+        let layout = TextEditLayout {
+            id,
+            rect: text_rect,
+            pos_y: cursor_pos.y,
+            is_pointer_button_down_on: true,
+            covered: true,
+        };
+        self.interaction.first_text = Some(layout);
+        self.interaction.multi_text_edit.push(layout);
+        self.interaction.is_pointer_button_down_on_text_edit = true;
+    }
+
+    pub fn end_multi_select(&mut self) {
+        self.interaction.is_pointer_button_down_on_text_edit = false;
+    }
+
+    pub fn can_refresh(&self) -> bool {
+        self.interaction.is_pointer_button_down_on_text_edit
+    }
+
+    /// refresh multi text edit
+    /// only add
+    pub fn refresh(&mut self, id: Id, text_rect: Rect, is_pointer_button_down_on: bool, cursor_pos: Pos2) -> Option<(bool, bool)> {
+        if let Some(mut first) = self.interaction.first_text {
+            if first.id == id {
+                first.is_pointer_button_down_on = is_pointer_button_down_on;
+                return None;
+            }
+
+            let (covered, order, in_rect) = Self::cross_hovered(text_rect, cursor_pos, first);
+            let pos = (text_rect.min.y + text_rect.max.y) / 2.0;
+            let mut matched = false;
+            self.interaction.multi_text_edit.iter_mut().for_each(|layout| {
+                if layout.id == id {
+                    layout.rect = text_rect;
+                    layout.pos_y = pos;
+                    layout.covered = covered;
+                    matched = true;
+                }
+            });
+            if !matched {
+                self.interaction.multi_text_edit.push(TextEditLayout {
+                    id,
+                    rect: text_rect,
+                    pos_y: pos,
+                    is_pointer_button_down_on,
+                    covered,
+                })
+            }
+            return Some((order, in_rect));
+        }
+        return None;
+    }
+
+    fn cross_hovered(text_rect: Rect, cursor_pos: Pos2, first: TextEditLayout) -> (bool, bool, bool) {
+        let positive_order = text_rect.min.y > first.pos_y && text_rect.min.y < cursor_pos.y;
+        let negative_order = text_rect.max.y < first.pos_y && text_rect.max.y > cursor_pos.y;
+        let is_in_rect = cursor_pos.x > text_rect.min.x && cursor_pos.x < text_rect.max.x && cursor_pos.y > text_rect.min.y && cursor_pos.y < text_rect.max.y;
+        (positive_order || negative_order, positive_order, is_in_rect)
+    }
+
+    /// top or bottom text edit
+    #[inline(always)]
+    pub fn is_top_or_bottom_text_edit(&self, id: Id, cursor_pos: Pos2) -> bool {
+        if let Some(first_text) = self.interaction.first_text {
+            /// only select it self
+            if id == first_text.id && cursor_pos.y > first_text.rect.min.y && cursor_pos.y < first_text.rect.max.y {
+                return true;
+            }
+            let drag_direction = first_text.pos_y < cursor_pos.y;
+            let mut cur_text = None;
+            let mut last_text: Option<&TextEditLayout> = Some(&first_text);
+            self.interaction.multi_text_edit.iter().for_each(|layout|{
+                if layout.id == id {
+                    cur_text = Some(layout);
+                }
+                // top to bottom
+                if drag_direction && layout.rect.min.y >= first_text.rect.max.y && layout.rect.min.y <= cursor_pos.y {
+                    if let Some(lt) = last_text {
+                        if lt.pos_y < layout.pos_y {
+                            last_text = Some(layout);
+                        }
+                    } else {
+                        last_text = Some(layout);
+                    }
+                // bottom to top
+                } else if !drag_direction && layout.rect.max.y <= first_text.rect.min.y && layout.rect.max.y >= cursor_pos.y {
+                    if let Some(lt) = last_text {
+                        if lt.pos_y > layout.pos_y {
+                            last_text = Some(layout);
+                        }
+                    } else {
+                        last_text = Some(layout);
+                    }
+                }
+            });
+            if let Some(cur) = cur_text {
+                if let Some(last) = last_text {
+                    return cur.id == last.id;
+                }
+            }
+        }
+        true
+    }
+
+    /// top or bottom text edit
+    #[inline(always)]
+    pub fn is_pointer_button_down_on(&self, id: Id) -> bool {
+        if self.interaction.first_text.is_none() {
+            return false;
+        }
+        let mut flag = false;
+        self.interaction.multi_text_edit.iter().for_each(|&i| {
+            if i.id == id {
+                flag = i.covered;
+            }
+        });
+        flag
+    }
+
+    // 用选中的第一个文本框记录当前的状态 -> 是否被按下
+    pub fn is_pointer_button_down(&self) -> bool {
+        if let Some(first) = self.interaction.first_text {
+            return first.is_pointer_button_down_on;
+        }
+        false
+    }
+
+    pub fn is_first_text(&self, id: Id) -> bool {
+        if let Some(first) = self.interaction.first_text {
+            return first.id == id;
+        }
+        false
     }
 
     /// Which widget has keyboard focus?

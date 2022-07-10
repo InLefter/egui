@@ -67,11 +67,15 @@ pub struct TextEdit<'t> {
     desired_height_rows: usize,
     lock_focus: bool,
     cursor_at_end: bool,
+    with_rect: bool,
+    select_multi: bool,
 }
 
 impl<'t> WidgetWithState for TextEdit<'t> {
     type State = TextEditState;
 }
+
+const CURSOR_BLINK_DURATION: f64 = 0.5;
 
 impl<'t> TextEdit<'t> {
     pub fn load_state(ctx: &Context, id: Id) -> Option<TextEditState> {
@@ -112,6 +116,8 @@ impl<'t> TextEdit<'t> {
             desired_height_rows: 4,
             lock_focus: false,
             cursor_at_end: true,
+            with_rect: true,
+            select_multi: false,
         }
     }
 
@@ -205,6 +211,16 @@ impl<'t> TextEdit<'t> {
         self
     }
 
+    pub fn with_rect(mut self, with_rect: bool) -> Self {
+        self.with_rect = with_rect;
+        self
+    }
+
+    pub fn select_multi(mut self, select_multi: bool) -> Self {
+        self.select_multi = select_multi;
+        self
+    }
+
     /// Default is `true`. If set to `false` there will be no frame showing that this is editable text!
     pub fn frame(mut self, frame: bool) -> Self {
         self.frame = frame;
@@ -279,6 +295,7 @@ impl<'t> TextEdit<'t> {
         let is_mutable = self.text.is_mutable();
         let frame = self.frame;
         let interactive = self.interactive;
+        let with_rect = self.with_rect;
         let where_to_put_background = ui.painter().add(Shape::Noop);
 
         let margin = self.margin;
@@ -298,7 +315,7 @@ impl<'t> TextEdit<'t> {
         if frame {
             let visuals = ui.style().interact(&output.response);
             let frame_rect = frame_rect.expand(visuals.expansion);
-            let shape = if is_mutable {
+            let shape = if is_mutable && with_rect {
                 if output.response.has_focus() {
                     epaint::RectShape {
                         rect: frame_rect,
@@ -351,6 +368,8 @@ impl<'t> TextEdit<'t> {
             desired_height_rows,
             lock_focus,
             cursor_at_end,
+            with_rect: _,
+            select_multi,
         } = self;
 
         let text_color = text_color
@@ -423,72 +442,135 @@ impl<'t> TextEdit<'t> {
         let mut response = ui.interact(rect, id, sense);
         let text_clip_rect = rect;
         let painter = ui.painter_at(text_clip_rect.expand(1.0)); // expand to avoid clipping cursor
-
+        let mut also_paint = false;
+        let mut refresh_result = None;
+        let resp_pointer_down_on = response.is_pointer_button_down_on();
+        println!("=========> begin {:?} {:?} hover: {:?}", id, interactive, response.hovered());
+        // println!("==> cursor_range {:?} {:?} {:?}", response.is_pointer_button_down_on(), state.cursor_range, state.ccursor_range);
         if interactive {
-            if let Some(pointer_pos) = ui.ctx().pointer_interact_pos() {
-                if response.hovered() && text.is_mutable() {
-                    ui.output().mutable_text_under_cursor = true;
-                }
+            match ui.ctx().pointer_interact_pos() {
+                Some(pointer_pos) => {
+                    if response.hovered() && text.is_mutable() {
+                        ui.output().mutable_text_under_cursor = true;
+                    }
+                    let mut top_or_bottom = true;
 
-                // TODO(emilk): drag selected text to either move or clone (ctrl on windows, alt on mac)
-                let singleline_offset = vec2(state.singleline_offset, 0.0);
-                let cursor_at_pointer =
-                    galley.cursor_from_pos(pointer_pos - response.rect.min + singleline_offset);
-
-                if ui.visuals().text_cursor_preview
-                    && response.hovered()
-                    && ui.input().pointer.is_moving()
-                {
-                    // preview:
-                    paint_cursor_end(
-                        ui,
-                        row_height,
-                        &painter,
-                        response.rect.min,
-                        &galley,
-                        &cursor_at_pointer,
-                    );
-                }
-
-                if response.double_clicked() {
-                    // Select word:
-                    let center = cursor_at_pointer;
-                    let ccursor_range = select_word_at(text.as_ref(), center.ccursor);
-                    state.set_cursor_range(Some(CursorRange {
-                        primary: galley.from_ccursor(ccursor_range.primary),
-                        secondary: galley.from_ccursor(ccursor_range.secondary),
-                    }));
-                } else if response.triple_clicked() {
-                    // Select line:
-                    let center = cursor_at_pointer;
-                    let ccursor_range = select_line_at(text.as_ref(), center.ccursor);
-                    state.set_cursor_range(Some(CursorRange {
-                        primary: galley.from_ccursor(ccursor_range.primary),
-                        secondary: galley.from_ccursor(ccursor_range.secondary),
-                    }));
-                } else if allow_drag_to_select {
-                    if response.hovered() && ui.input().pointer.any_pressed() {
-                        ui.memory().request_focus(id);
-                        if ui.input().modifiers.shift {
-                            if let Some(mut cursor_range) = state.cursor_range(&*galley) {
-                                cursor_range.primary = cursor_at_pointer;
-                                state.set_cursor_range(Some(cursor_range));
-                            } else {
-                                state.set_cursor_range(Some(CursorRange::one(cursor_at_pointer)));
-                            }
-                        } else {
-                            state.set_cursor_range(Some(CursorRange::one(cursor_at_pointer)));
+                    if select_multi {
+                        if ui.memory().can_refresh() {
+                            refresh_result = ui.memory().refresh(id, rect, resp_pointer_down_on, pointer_pos);
                         }
-                    } else if ui.input().pointer.any_down() && response.is_pointer_button_down_on()
+
+                        also_paint = ui.memory().is_pointer_button_down_on(id);
+                        top_or_bottom = ui.memory().is_top_or_bottom_text_edit(id, pointer_pos);
+                    }
+
+                    // TODO(emilk): drag selected text to either move or clone (ctrl on windows, alt on mac)
+                    let singleline_offset = vec2(state.singleline_offset, 0.0);
+
+                    let cursor_at_pointer =
+                        galley.cursor_from_pos(pointer_pos - response.rect.min + singleline_offset, !top_or_bottom);
+
+                    if ui.visuals().text_cursor_preview
+                        && response.hovered()
+                        && ui.input().pointer.is_moving()
                     {
-                        // drag to select text:
-                        if let Some(mut cursor_range) = state.cursor_range(&*galley) {
-                            cursor_range.primary = cursor_at_pointer;
-                            state.set_cursor_range(Some(cursor_range));
+                        // preview:
+                        paint_cursor_end(
+                            ui,
+                            row_height,
+                            &painter,
+                            response.rect.min,
+                            &galley,
+                            &cursor_at_pointer,
+                        );
+                    }
+                    println!("===> interactive {:?} top_or_bottom: {:?} {:?} {:?} ", ui.input().pointer.any_down(), top_or_bottom, refresh_result, cursor_at_pointer);
+                    if response.double_clicked() {
+                        // Select word:
+                        let center = cursor_at_pointer;
+                        let ccursor_range = select_word_at(text.as_ref(), center.ccursor);
+                        state.set_cursor_range(Some(CursorRange {
+                            primary: galley.from_ccursor(ccursor_range.primary),
+                            secondary: galley.from_ccursor(ccursor_range.secondary),
+                        }));
+                        state.last_time = ui.ctx().input().time;
+                    } else if response.triple_clicked() {
+                        // Select line:
+                        let center = cursor_at_pointer;
+                        let ccursor_range = select_line_at(text.as_ref(), center.ccursor);
+                        state.set_cursor_range(Some(CursorRange {
+                            primary: galley.from_ccursor(ccursor_range.primary),
+                            secondary: galley.from_ccursor(ccursor_range.secondary),
+                        }));
+                        state.last_time = ui.ctx().input().time;
+                    } else if allow_drag_to_select {
+                        if ui.input().pointer.any_pressed() {
+                            if response.hovered() {
+                                ui.memory().request_focus(id);
+                                if ui.input().modifiers.shift {
+                                    if let Some(mut cursor_range) = state.cursor_range(&*galley) {
+                                        cursor_range.primary = cursor_at_pointer;
+                                        state.set_cursor_range(Some(cursor_range));
+                                    } else {
+                                        state.set_cursor_range(Some(CursorRange::one(cursor_at_pointer)));
+                                    }
+                                } else {
+                                    state.set_cursor_range(Some(CursorRange::one(cursor_at_pointer)));
+                                }
+                                if select_multi {
+                                    ui.memory().begin_multi_select(id, rect, pointer_pos);
+                                }
+                                println!("===> any_pressed {:?} {:?} {:?}", ui.memory().interaction.multi_text_edit, state.cursor_range, state.ccursor_range);
+                                state.last_time = ui.ctx().input().time;
+                            } else if select_multi {
+                                state.set_ccursor_range(None);
+                                if !ui.memory().is_first_text(id) {
+                                    state.set_ccursor_range(None);
+                                }
+                            }
+                        } else if ui.input().pointer.any_down()
+                        {
+                            println!("===> any_down {:?} {:?}", also_paint, ui.memory().is_pointer_button_down());
+                            if resp_pointer_down_on || (also_paint) {
+                                if also_paint {
+                                    if !response.hovered() {
+                                        if let Some((order, in_rect)) = refresh_result {
+                                            if in_rect {
+                                                ui.memory().request_focus(id);
+                                            }
+                                            if order {
+                                                state.set_ccursor_range(Some(CCursorRange::one(CCursor::new(0))));
+                                            } else {
+                                                state.set_ccursor_range(Some(CCursorRange::one(CCursor::new(text.as_str().chars().count()))));
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if let Some(mut cursor_range) = state.cursor_range(&*galley) {
+                                    cursor_range.primary = cursor_at_pointer;
+                                    state.set_cursor_range(Some(cursor_range));
+                                    state.last_time = ui.ctx().input().time;
+                                }
+                            }
+                        } else if ui.input().pointer.any_released() {
+                            println!("===> any_released ");
+                            ui.memory().end_multi_select();
                         }
+                    }
+                },
+                None => {
+                    if select_multi {
+                        also_paint = ui.memory().is_pointer_button_down_on(id);
                     }
                 }
             }
+            // if let Some(pointer_pos) = ui.ctx().pointer_interact_pos() {
+            //
+            // }
+        }
+        if state.cursor_range.is_some() {
+            println!("==> state {:?} {:?} {:?}, {:?}", id, also_paint, state.cursor_range.unwrap().primary, state.cursor_range.unwrap().secondary);
         }
 
         if response.hovered() && interactive {
@@ -574,31 +656,41 @@ impl<'t> TextEdit<'t> {
                 galley.paint_with_fallback_color(&painter, response.rect.min, hint_text_color);
             }
 
-            if ui.memory().has_focus(id) {
+            let down = ui.memory().is_pointer_button_down();
+            let focused = ui.memory().has_focus(id);
+            println!("==> paint_cursor_selection {:?} {:?} {:?} {:?}", focused, also_paint, resp_pointer_down_on , down);
+            if focused || also_paint  {
                 if let Some(cursor_range) = state.cursor_range(&*galley) {
                     // We paint the cursor on top of the text, in case
                     // the text galley has backgrounds (as e.g. `code` snippets in markup do).
+
                     paint_cursor_selection(ui, &painter, text_draw_pos, &galley, &cursor_range);
 
-                    if text.is_mutable() {
-                        let cursor_pos = paint_cursor_end(
-                            ui,
-                            row_height,
-                            &painter,
-                            text_draw_pos,
-                            &galley,
-                            &cursor_range.primary,
-                        );
+                    let now = ui.ctx().input().time;
+                    if text.is_mutable() && focused {
+                        let div = now - state.last_time;
+                        if div >= CURSOR_BLINK_DURATION * 2.0 {
+                            state.last_time = now;
+                        } else if div <= CURSOR_BLINK_DURATION {
+                            let cursor_pos = paint_cursor_end(
+                                ui,
+                                row_height,
+                                &painter,
+                                text_draw_pos,
+                                &galley,
+                                &cursor_range.primary,
+                            );
+                            if response.changed || selection_changed {
+                                ui.scroll_to_rect(cursor_pos, None); // keep cursor in view
+                            }
 
-                        if response.changed || selection_changed {
-                            ui.scroll_to_rect(cursor_pos, None); // keep cursor in view
+                            if interactive {
+                                // eframe web uses `text_cursor_pos` when showing IME,
+                                // so only set it when text is editable and visible!
+                                ui.ctx().output().text_cursor_pos = Some(cursor_pos.left_top());
+                            }
                         }
-
-                        if interactive {
-                            // eframe web uses `text_cursor_pos` when showing IME,
-                            // so only set it when text is editable and visible!
-                            ui.ctx().output().text_cursor_pos = Some(cursor_pos.left_top());
-                        }
+                        // ui.ctx().request_repaint();
                     }
                 }
             }
@@ -687,6 +779,7 @@ fn events(
 
     let copy_if_not_password = |ui: &Ui, text: String| {
         if !password {
+            println!("==> copy {:?}", text);
             ui.ctx().output().copied_text = text;
         }
     };
@@ -835,6 +928,7 @@ fn events(
                 primary: galley.from_ccursor(new_ccursor_range.primary),
                 secondary: galley.from_ccursor(new_ccursor_range.secondary),
             };
+            state.last_time = ui.ctx().input().time;
         }
     }
 

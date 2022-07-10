@@ -541,20 +541,68 @@ impl Galley {
     }
 
     /// Cursor at the given position within the galley
-    pub fn cursor_from_pos(&self, pos: Vec2) -> Cursor {
+    pub fn cursor_from_pos(&self, pos: Vec2, select_flag: bool) -> Cursor {
         let mut best_y_dist = f32::INFINITY;
         let mut cursor = Cursor::default();
 
         let mut ccursor_index = 0;
         let mut pcursor_it = PCursor::default();
 
+        // calculate tail cursor state
+        if select_flag && self.rows.len() > 0 {
+            let first_row = self.rows.get(0).unwrap();
+            let last_row = self.rows.get(self.rows.len() - 1).unwrap();
+            let mut row_n = 0;
+            let mut column = 0;
+            let mut row_column = 0;
+            if pos.y > last_row.max_y() {
+                for (row_nr, row) in self.rows.iter().enumerate() {
+                    row_column = row.char_count_including_newline();
+                    ccursor_index += row_column;
+                    if row.ends_with_newline {
+                        pcursor_it.paragraph += 1;
+                        pcursor_it.offset = 0;
+                    } else {
+                        pcursor_it.offset += row_column;
+                    }
+                    row_n = row_nr;
+                    column = row.char_at(pos.x);
+                }
+                cursor = Cursor {
+                    ccursor: CCursor {
+                        index: ccursor_index,
+                        prefer_next_row: true,
+                    },
+                    rcursor: RCursor {
+                        row: row_n,
+                        column: row_column,
+                    },
+                    pcursor: PCursor {
+                        paragraph: pcursor_it.paragraph,
+                        offset: pcursor_it.offset,
+                        prefer_next_row: true,
+                    },
+                };
+                return cursor;
+            } else if pos.y < first_row.min_y() {
+                cursor = Cursor::default();
+                return cursor;
+            }
+        }
+
         for (row_nr, row) in self.rows.iter().enumerate() {
             let is_pos_within_row = pos.y >= row.min_y() && pos.y <= row.max_y();
             let y_dist = (row.min_y() - pos.y).abs().min((row.max_y() - pos.y).abs());
+            // println!(
+            //     "===> is_pos_within_row: {:?}, {:?}, {:?}",
+            //     is_pos_within_row, y_dist, best_y_dist
+            // );
             if is_pos_within_row || y_dist < best_y_dist {
                 best_y_dist = y_dist;
                 let column = row.char_at(pos.x);
+
                 let prefer_next_row = column < row.char_count_excluding_newline();
+                // println!("===> column: {:?}, {:?}", column, prefer_next_row);
                 cursor = Cursor {
                     ccursor: CCursor {
                         index: ccursor_index + column,

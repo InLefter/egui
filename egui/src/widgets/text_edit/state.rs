@@ -13,11 +13,11 @@ type Undoer = crate::util::undoer::Undoer<(CCursorRange, String)>;
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(default))]
 pub struct TextEditState {
-    cursor_range: Option<CursorRange>,
+    pub cursor_range: Option<CursorRange>,
 
     /// This is what is easiest to work with when editing text,
     /// so users are more likely to read/write this.
-    ccursor_range: Option<CCursorRange>,
+    pub ccursor_range: Option<CCursorRange>,
 
     /// Wrapped in Arc for cheaper clones.
     #[cfg_attr(feature = "serde", serde(skip))]
@@ -30,6 +30,8 @@ pub struct TextEditState {
     // Visual offset when editing singleline text bigger than the width.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub(crate) singleline_offset: f32,
+
+    pub last_time: f64,
 }
 
 impl TextEditState {
